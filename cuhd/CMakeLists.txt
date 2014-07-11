@@ -45,4 +45,4 @@ ADD_CUSTOM_TARGET (add_cuhd_headers SOURCES ${HEADERS_ALL})
 # Add the subdirectories
 ########################################################################
 ADD_SUBDIRECTORY(lib)
-
+ADD_SUBDIRECTORY(examples)

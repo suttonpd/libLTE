@@ -30,10 +30,19 @@
 #include <math.h>
 #include <unistd.h>
 
-
 #include "liblte/cuhd/cuhd.h"
-#include "liblte/phy/utils/vector.h"
-#include "liblte/phy/utils/debug.h"
+
+typedef _Complex float cf_t;
+
+float vec_avg_power_cf(cf_t *x, int len) {
+  int j;
+  float power = 0;
+  for (j=0;j<len;j++) {
+    power += (__real__ x[j]) * (__real__ x[j]) +
+        (__imag__ x[j]) * (__imag__ x[j]);
+  }
+  return power / len;
+}
 
 int cuhd_rssi_scan(void *uhd, float *freqs, float *rssi, int nof_bands, double fs, int nsamp) {
   int i, j;
@@ -66,9 +75,7 @@ int cuhd_rssi_scan(void *uhd, float *freqs, float *rssi, int nof_bands, double f
     }
     rssi[i] = vec_avg_power_cf(buffer, nsamp);
     printf("[%3d]: Freq %4.1f Mhz - RSSI: %3.2f dBm\r", i, f/1000000, 10*log10f(rssi[i]) + 30); fflush(stdout);
-    if (VERBOSE_ISINFO()) {
-      printf("\n");
-    }
+    printf("\n");
   }
   cuhd_stop_rx_stream(uhd);
 
