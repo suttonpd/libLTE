@@ -37,35 +37,32 @@
 #include <signal.h>
 
 #include "liblte/phy/phy.h"
+#include "liblte/cuhd/cuhd.h"
+void *uhd;
 
-#ifndef DISABLE_UHD
-  #include "liblte/cuhd/cuhd.h"
-  void *uhd;
-#endif
 
-#ifndef DISABLE_GRAPHICS
-  #include "liblte/graphics/plot.h"
-  plot_real_t poutfft;
-  plot_complex_t pce;
-  plot_scatter_t pscatrecv, pscatequal;
-#endif
-
-#define MHZ       1000000
+#define MHZ           1000000
 #define SAMP_FREQ     1920000
-#define FLEN       9600
-#define FLEN_PERIOD    0.005
+#define FLEN          9600
+#define FLEN_PERIOD   0.005
 
 #define NOF_PORTS 2
+#define NOF_PRACH_SEQUENCES 52
 
 float find_threshold = 20.0, track_threshold = 10.0;
 int max_track_lost = 20, nof_frames = -1;
 int track_len=300;
 char *input_file_name = NULL;
 int disable_plots = 0;
+double pss_time_offset = (6/14)*10e-3;
+double prach_time_offset = 4*10e-3; //Subframe 4
 
 int go_exit=0;
 
-float uhd_freq = 2600000000.0, uhd_gain = 20.0;
+double uhd_rx_freq = 2680000000.0, uhd_rx_gain = 40.0;
+double uhd_rx_offset = 0.0;
+double uhd_tx_freq = 2560000000.0, uhd_tx_gain = 50.0, uhd_tx_rate = 7680000.0;
+double uhd_tx_offset = 8000000;
 char *uhd_args = "";
 
 filesource_t fsrc;
@@ -75,6 +72,9 @@ lte_fft_t fft;
 chest_t chest;
 sync_t sfind, strack;
 cfo_t cfocorr;
+prach_t prach;
+cf_t *prach_buffers[NOF_PRACH_SEQUENCES];
+int prach_buffer_len;
 
 
 enum sync_state {FIND, TRACK};
@@ -82,26 +82,17 @@ enum sync_state {FIND, TRACK};
 void usage(char *prog) {
   printf("Usage: %s [iagfndvp]\n", prog);
   printf("\t-i input_file [Default use USRP]\n");
-#ifndef DISABLE_UHD
   printf("\t-a UHD args [Default %s]\n", uhd_args);
-  printf("\t-g UHD RX gain [Default %.2f dB]\n", uhd_gain);
-  printf("\t-f UHD RX frequency [Default %.1f MHz]\n", uhd_freq/1000000);
-#else
-  printf("\t   UHD is disabled. CUHD library not available\n");
-#endif
+  printf("\t-g UHD RX gain [Default %.2f dB]\n", uhd_rx_gain);
+  printf("\t-f UHD RX frequency [Default %.1f MHz]\n", uhd_rx_freq/1000000);
   printf("\t-n nof_frames [Default %d]\n", nof_frames);
   printf("\t-p PSS threshold [Default %f]\n", find_threshold);
-#ifndef DISABLE_GRAPHICS
-  printf("\t-d disable plots [Default enabled]\n");
-#else
-  printf("\t plots are disabled. Graphics library not available\n");
-#endif
-  printf("\t-v [set verbose to debug, default none]\n");
+  printf("\t-v [set verbosity - 0=none, 1=info, 2=debug - Default 0]\n");
 }
 
 void parse_args(int argc, char **argv) {
   int opt;
-  while ((opt = getopt(argc, argv, "iagfndvp")) != -1) {
+  while ((opt = getopt(argc, argv, "iagfnvp")) != -1) {
     switch(opt) {
     case 'i':
       input_file_name = argv[optind];
@@ -110,10 +101,10 @@ void parse_args(int argc, char **argv) {
       uhd_args = argv[optind];
       break;
     case 'g':
-      uhd_gain = atof(argv[optind]);
+      uhd_rx_gain = atof(argv[optind]);
       break;
     case 'f':
-      uhd_freq = atof(argv[optind]);
+      uhd_rx_freq = atof(argv[optind]);
       break;
     case 'p':
       find_threshold = atof(argv[optind]);
@@ -121,11 +112,8 @@ void parse_args(int argc, char **argv) {
     case 'n':
       nof_frames = atoi(argv[optind]);
       break;
-    case 'd':
-      disable_plots = 1;
-      break;
     case 'v':
-      verbose++;
+      verbose = atoi(argv[optind]);
       break;
     default:
       usage(argv[0]);
@@ -134,63 +122,20 @@ void parse_args(int argc, char **argv) {
   }
 }
 
-#ifndef DISABLE_GRAPHICS
-
-void init_plots() {
-  plot_init();
-  plot_real_init(&poutfft);
-  plot_real_setTitle(&poutfft, "Output FFT - Magnitude");
-  plot_real_setLabels(&poutfft, "Index", "dB");
-  plot_real_setYAxisScale(&poutfft, -60, 0);
-  plot_real_setXAxisScale(&poutfft, 1, 504);
-
-  plot_complex_init(&pce);
-  plot_complex_setTitle(&pce, "Channel Estimates");
-  plot_complex_setYAxisScale(&pce, Ip, -0.01, 0.01);
-  plot_complex_setYAxisScale(&pce, Q, -0.01, 0.01);
-  plot_complex_setYAxisScale(&pce, Magnitude, 0, 0.01);
-  plot_complex_setYAxisScale(&pce, Phase, -M_PI, M_PI);
-
-  plot_scatter_init(&pscatrecv);
-  plot_scatter_setTitle(&pscatrecv, "Received Symbols");
-  plot_scatter_setXAxisScale(&pscatrecv, -0.01, 0.01);
-  plot_scatter_setYAxisScale(&pscatrecv, -0.01, 0.01);
-
-  plot_scatter_init(&pscatequal);
-  plot_scatter_setTitle(&pscatequal, "Equalized Symbols");
-  plot_scatter_setXAxisScale(&pscatequal, -1, 1);
-  plot_scatter_setYAxisScale(&pscatequal, -1, 1);
-}
-
-#endif
-
 int base_init(int frame_length) {
   int i;
-
-#ifndef DISABLE_GRAPHICS
-  if (!disable_plots) {
-    init_plots();
-  }
-#else
-  printf("-- PLOTS are disabled. Graphics library not available --\n\n");
-#endif
 
   if (input_file_name) {
     if (filesource_init(&fsrc, input_file_name, COMPLEX_FLOAT_BIN)) {
       return -1;
     }
   } else {
-    /* open UHD device */
-  #ifndef DISABLE_UHD
-    printf("Opening UHD device...\n");
+    /* open UHD devices */
+    printf("Opening UHD rx device...\n");
     if (cuhd_open(uhd_args,&uhd)) {
-      fprintf(stderr, "Error opening uhd\n");
+      fprintf(stderr, "Error opening uhd rx\n");
       return -1;
     }
-  #else
-    printf("Error UHD not available. Select an input file\n");
-    return -1;
-  #endif
   }
 
   input_buffer = (cf_t*) malloc(frame_length * sizeof(cf_t));
@@ -235,6 +180,19 @@ int base_init(int frame_length) {
     return -1;
   }
 
+  if (prach_init(&prach, 512, 0, 648, false, 11)) {
+    fprintf(stderr, "Error initializing PRACH\n");
+    return -1;
+  }
+  prach_buffer_len = prach.N_seq + prach.N_cp;
+  for(int i=0;i<NOF_PRACH_SEQUENCES;i++){
+    prach_buffers[i] = (cf_t*)malloc(prach_buffer_len*sizeof(cf_t));
+    if(!prach_buffers[i]) {
+      perror("maloc");
+      return -1;
+    }
+  }
+
   return 0;
 }
 
@@ -244,26 +202,34 @@ void base_free() {
   if (input_file_name) {
     filesource_free(&fsrc);
   } else {
-  #ifndef DISABLE_UHD
     cuhd_close(uhd);
-  #endif
   }
-
-#ifndef DISABLE_GRAPHICS
-  plot_exit();
-#endif
 
   sync_free(&sfind);
   sync_free(&strack);
   lte_fft_free(&fft);
   chest_free(&chest);
   cfo_free(&cfocorr);
+  prach_free(&prach);
 
+  for(int i=0;i<NOF_PRACH_SEQUENCES;i++){
+    free(prach_buffers[i]);
+  }
   free(input_buffer);
   free(fft_buffer);
   for (i=0;i<MAX_PORTS_CTRL;i++) {
     free(ce[i]);
   }
+}
+
+int generate_prach_sequences(){
+  for(int i=0;i<NOF_PRACH_SEQUENCES;i++){
+    if(prach_gen(&prach, i, 2, prach_buffers[i])){
+      fprintf(stderr, "Error generating prach sequence\n");
+      return -1;
+    }
+  }
+  return 0;
 }
 
 
@@ -294,22 +260,6 @@ int mib_decoder_run(cf_t *input, pbch_mib_t *mib) {
   DEBUG("Decoding PBCH\n", 0);
   n = pbch_decode(&pbch, fft_buffer, ce, 1, mib);
 
-
-#ifndef DISABLE_GRAPHICS
-  float tmp[72*7];
-  if (!disable_plots) {
-    for (i=0;i<72*7;i++) {
-      tmp[i] = 10*log10f(cabsf(fft_buffer[i]));
-    }
-    plot_real_setNewData(&poutfft, tmp, 72*7);
-    plot_complex_setNewData(&pce, ce[0], 72*7);
-    plot_scatter_setNewData(&pscatrecv, pbch.pbch_symbols[0], pbch.nof_symbols);
-    if (n) {
-      plot_scatter_setNewData(&pscatequal, pbch.pbch_d, pbch.nof_symbols);
-    }
-  }
-#endif
-
   return n;
 }
 
@@ -329,16 +279,12 @@ int main(int argc, char **argv) {
   int n;
   int nof_found_mib = 0;
   float timeoffset = 0;
+  timestamp_t uhd_time;
+  timestamp_t pss_time;
+  timestamp_t next_frame_time;
+  timestamp_t next_prach_time;
 
-  verbose = VERBOSE_INFO;
-
-#ifdef DISABLE_UHD
-  if (argc < 3) {
-    usage(argv[0]);
-    exit(-1);
-  }
-#endif
-
+  verbose = VERBOSE_NONE;
   parse_args(argc,argv);
 
   if (base_init(FLEN)) {
@@ -350,19 +296,29 @@ int main(int argc, char **argv) {
   sync_pss_det_peak_to_avg(&strack);
 
   if (!input_file_name) {
-  #ifndef DISABLE_UHD
-    INFO("Setting sampling frequency %.2f MHz\n", (float) SAMP_FREQ/MHZ);
-    cuhd_set_rx_srate(uhd, SAMP_FREQ);
-    cuhd_set_rx_gain(uhd, uhd_gain);
-    /* set uhd_freq */
-    cuhd_set_rx_freq(uhd, (double) uhd_freq);
+    double f, r, g;
+    r = cuhd_set_rx_srate(uhd, SAMP_FREQ);
+    g = cuhd_set_rx_gain(uhd, uhd_rx_gain);
+    f = cuhd_set_rx_freq(uhd, uhd_rx_freq);
     cuhd_rx_wait_lo_locked(uhd);
-    DEBUG("Set uhd_freq to %.3f MHz\n", (double) uhd_freq);
+    INFO("Set uhd rx frequency %.3f MHz, rate %.3f MHz, gain %.3f dB\n",
+          f/1000000,
+          r/1000000,
+          g);
+
+    r = cuhd_set_tx_srate(uhd, uhd_tx_rate);
+    g = cuhd_set_tx_gain(uhd, uhd_tx_gain);
+    f = cuhd_set_tx_freq_offset(uhd, uhd_tx_freq, uhd_tx_offset);
+    INFO("Set uhd tx frequency %.3f MHz, rate %.3f MHz, gain %.3f dB\n",
+          f/1000000,
+          r/1000000,
+          g);
 
     DEBUG("Starting receiver...\n",0);
     cuhd_start_rx_stream(uhd);
-  #endif
   }
+
+  generate_prach_sequences();
 
   printf("\n --- Press Ctrl+C to exit --- \n");
   signal(SIGINT, sigintHandler);
@@ -389,16 +345,17 @@ int main(int argc, char **argv) {
         filesource_read(&fsrc, input_buffer, FLEN);
       }
     } else {
-    #ifndef DISABLE_UHD
-      cuhd_recv(uhd, input_buffer, FLEN, 1);
-    #endif
+      cuhd_recv_timed(uhd, input_buffer, FLEN, 1, &uhd_time.full_secs, &uhd_time.frac_secs);
+      INFO("UHD time = %.6f\n", uhd_time.full_secs+uhd_time.frac_secs);
     }
 
     switch(state) {
     case FIND:
       /* find peak in all frame */
       find_idx = sync_run(&sfind, input_buffer);
-      INFO("FIND %3d:\tPAR=%.2f\n", frame_cnt, sync_get_peak_to_avg(&sfind));
+      timestamp_init(&pss_time, uhd_time.full_secs, uhd_time.frac_secs);
+      timestamp_add(&pss_time, 0, find_idx/(double)SAMP_FREQ);
+      INFO("FIND %3d:\tPAR=%.2f\tTIME=%.6f\n", frame_cnt, sync_get_peak_to_avg(&sfind), timestamp_real(&pss_time));
       if (find_idx != -1) {
         /* if found peak, go to track and set track threshold */
         cell_id = sync_get_cell_id(&sfind);
@@ -426,7 +383,9 @@ int main(int argc, char **argv) {
       break;
     case TRACK:
       /* Find peak around known position find_idx */
-      INFO("TRACK %3d: PSS find_idx %d offset %d\n", frame_cnt, find_idx, find_idx - track_len);
+      timestamp_init(&pss_time, uhd_time.full_secs, uhd_time.frac_secs);
+      timestamp_add(&pss_time, 0, find_idx/(double)SAMP_FREQ);
+      INFO("TRACK %3d: PSS find_idx %d offset %d PSS time %.6f\n", frame_cnt, find_idx, find_idx - track_len, timestamp_real(&pss_time));
       track_idx = sync_run(&strack, &input_buffer[find_idx - track_len]);
 
       if (track_idx != -1) {
@@ -463,6 +422,20 @@ int main(int argc, char **argv) {
       cfo_correct(&cfocorr, input_buffer, -cfo/128);
 
       if (nslot == 0 && find_idx + 960 < FLEN) {
+        timestamp_init(&next_frame_time, uhd_time.full_secs, uhd_time.frac_secs);
+        timestamp_add(&next_frame_time, 0, find_idx/(double)SAMP_FREQ - pss_time_offset + 0.001);
+        INFO("Next frame time = %.6f\n", timestamp_real(&next_frame_time));
+
+        //Tx PRACH every 10 lte dl frames
+        if(frame_cnt%20 < 2){
+          printf("TX PRACH\n");
+          timestamp_copy(&next_prach_time, &next_frame_time);
+          timestamp_add(&next_prach_time, 0, prach_time_offset);
+          //timestamp_add(&next_prach_time, 0, 0.01);
+          cuhd_send_timed(uhd, prach_buffers[7], prach_buffer_len, 0,
+                          next_prach_time.full_secs, next_prach_time.frac_secs);
+        }
+
         INFO("Finding MIB at idx %d\n", find_idx);
         if (mib_decoder_run(&input_buffer[find_idx], &mib)) {
           INFO("MIB detected attempt=%d\n", frame_cnt);

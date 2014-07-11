@@ -58,19 +58,19 @@ add_executable(pbch_enodeb pbch_enodeb.c)
 target_link_libraries(pbch_enodeb lte_phy)
 
 IF(${CUHD_FIND} EQUAL -1)
-	SET_TARGET_PROPERTIES(pbch_ue PROPERTIES COMPILE_DEFINITIONS "DISABLE_UHD")
-	SET_TARGET_PROPERTIES(pbch_enodeb PROPERTIES COMPILE_DEFINITIONS "DISABLE_UHD")
+  SET_TARGET_PROPERTIES(pbch_ue PROPERTIES COMPILE_DEFINITIONS "DISABLE_UHD")
+  SET_TARGET_PROPERTIES(pbch_enodeb PROPERTIES COMPILE_DEFINITIONS "DISABLE_UHD")
 ELSE(${CUHD_FIND} EQUAL -1)
-        target_link_libraries(pbch_ue cuhd)
-	target_link_libraries(pbch_enodeb cuhd)
+  target_link_libraries(pbch_ue cuhd)
+  target_link_libraries(pbch_enodeb cuhd)
 ENDIF(${CUHD_FIND} EQUAL -1)
 
 IF(${GRAPHICS_FIND} EQUAL -1)
-	SET_TARGET_PROPERTIES(pbch_ue PROPERTIES COMPILE_DEFINITIONS "DISABLE_GRAPHICS")
-	SET_TARGET_PROPERTIES(pbch_enodeb PROPERTIES COMPILE_DEFINITIONS "DISABLE_GRAPHICS")
+  SET_TARGET_PROPERTIES(pbch_ue PROPERTIES COMPILE_DEFINITIONS "DISABLE_GRAPHICS")
+  SET_TARGET_PROPERTIES(pbch_enodeb PROPERTIES COMPILE_DEFINITIONS "DISABLE_GRAPHICS")
 ELSE(${GRAPHICS_FIND} EQUAL -1)
-	target_link_libraries(pbch_ue graphics)
-	target_link_libraries(pbch_enodeb graphics)
+  target_link_libraries(pbch_ue graphics)
+  target_link_libraries(pbch_enodeb graphics)
 ENDIF(${GRAPHICS_FIND} EQUAL -1)
 
 
@@ -81,17 +81,23 @@ ENDIF(${GRAPHICS_FIND} EQUAL -1)
 
 IF(${CUHD_FIND} GREATER -1)
 
-	add_executable(scan_rssi scan_rssi.c)
-        target_link_libraries(scan_rssi lte_phy cuhd )
+  add_executable(prach_ue prach_ue.c)
+  target_link_libraries(prach_ue lte_phy cuhd)
 
-	add_executable(scan_pss scan_pss.c)
-        target_link_libraries(scan_pss lte_phy cuhd )
+  add_executable(signal_capture signal_capture.c)
+  target_link_libraries(signal_capture lte_phy cuhd )
 
-	add_executable(scan_mib scan_mib.c)
-        target_link_libraries(scan_mib lte_phy cuhd )
+  add_executable(scan_rssi scan_rssi.c)
+  target_link_libraries(scan_rssi lte_phy cuhd )
 
-	MESSAGE(STATUS "   UHD examples will be installed.")
+  add_executable(scan_pss scan_pss.c)
+  target_link_libraries(scan_pss lte_phy cuhd )
+
+  add_executable(scan_mib scan_mib.c)
+  target_link_libraries(scan_mib lte_phy cuhd )
+
+  MESSAGE(STATUS "   UHD examples will be installed.")
 
 ELSE(${CUHD_FIND} GREATER -1)
-	MESSAGE(STATUS "   UHD examples NOT INSTALLED: CUHD library not compiled.")
+  MESSAGE(STATUS "   UHD examples NOT INSTALLED: CUHD library not compiled.")
 ENDIF(${CUHD_FIND} GREATER -1)

@@ -51,6 +51,7 @@
 #include "liblte/phy/common/phy_common.h"
 #include "liblte/phy/common/fft.h"
 #include "liblte/phy/common/sequence.h"
+#include "liblte/phy/common/timestamp.h"
 
 #include "liblte/phy/ch_estimation/chest.h"
 #include "liblte/phy/ch_estimation/refsignal.h"
@@ -89,6 +90,7 @@
 #include "liblte/phy/phch/pbch.h"
 #include "liblte/phy/phch/pcfich.h"
 #include "liblte/phy/phch/phich.h"
+#include "liblte/phy/phch/prach.h"
 
 #include "liblte/phy/scrambling/scrambling.h"
 
